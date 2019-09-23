@@ -7,10 +7,13 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringRunner;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.concurrent.*;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+
+//https://www.youtube.com/watch?v=-MBPQ7NIL_Y
 @RunWith(SpringRunner.class)
 @ContextConfiguration(classes = Editor.class)
 public class MyTests {
@@ -125,7 +128,8 @@ public class MyTests {
         CompletableFuture<String> second = CompletableFuture.supplyAsync(()->{ try { Thread.sleep(1000); } catch (InterruptedException e) { e.printStackTrace();}
             return "second";});
 
-        //применит к первому из выполнившихся. Ко второму тоже выполнится, но ссылки на него все равно нет.
+        //применит к первому из выполнившихся.
+        // Ко второму тоже выполнится, но ссылки на него все равно нет. Но не знаю как это проверить
         CompletableFuture<String> either = first.applyToEither(second, text -> text.toUpperCase());
         either.thenAccept(text-> System.out.println(text));
         either.get();
@@ -146,7 +150,7 @@ public class MyTests {
         CompletableFuture<Void> allCompleted = CompletableFuture.allOf(first, second, third);
         allCompleted.get();
 
-//        allCompleted.thenAccept(aVoid -> {
+//        allCompleted.thenAccept(aVoid -> {   //можно и так
 //            try {
 //                System.out.println(first.get());
 //                System.out.println(second.get());
@@ -156,7 +160,7 @@ public class MyTests {
 //            }
 //        });
 
-        CompletableFuture<Void> cf = allCompleted.thenRun(()->{
+        CompletableFuture<Void> cf = allCompleted.thenRun(()->{ //можно и так
             try {
                 System.out.println(first.get());
                 System.out.println(second.get());
@@ -165,5 +169,83 @@ public class MyTests {
                 e.printStackTrace();
             }
         });
+    }
+
+    @Test
+    public void anyOf() throws ExecutionException, InterruptedException {
+        CompletableFuture<String> first = CompletableFuture.supplyAsync(()->{ try { Thread.sleep(2000); } catch (InterruptedException e) { e.printStackTrace(); }
+            return "first";});
+        CompletableFuture<String> second = CompletableFuture.supplyAsync(()->{ try { Thread.sleep(1000); } catch (InterruptedException e) { e.printStackTrace(); }
+            return "second";});
+        CompletableFuture<String> third = CompletableFuture.supplyAsync(()->{ try { Thread.sleep(2000); } catch (InterruptedException e) { e.printStackTrace(); }
+            return "third";});
+
+        CompletableFuture<Object> firstCompleted = CompletableFuture.anyOf(first, second, third); //первого завершившегося.
+
+        firstCompleted.thenAccept(object-> System.out.println(object));
+
+        Object o = firstCompleted.get();
+    }
+
+    @Test
+    public void exception() throws ExecutionException, InterruptedException {
+        CompletableFuture<String> cfe = this.throwsException(true);
+
+        CompletableFuture<String> cf = cfe.thenApply(text->{ //never get called. because there is no result(text), there is an exception.
+            System.out.println(text);
+            return text;});
+
+        System.out.println(cfe.get()); //never get called. throws exception too
+    }
+
+    private CompletableFuture<String> throwsException(boolean b) throws IllegalArgumentException{
+        CompletableFuture<String> cf = CompletableFuture.supplyAsync(() -> {
+            if(b){
+                throw new IllegalArgumentException();
+            }else {
+                return "first";
+            }
+        });
+
+        return cf;
+    }
+
+    @Test
+    public void handleException()throws Exception{
+        CompletableFuture<String> cfe = this.throwsException(true);
+
+        CompletableFuture<String> cf = cfe
+                .handle((result, throwable) -> { //либо exception, либо result
+                    if(throwable != null){
+                        return "Handled: " + throwable; //if exception
+                    } else {
+                        return result.toUpperCase(); //if no exception
+                    }});
+
+        System.out.println(cf.get());
+    }
+
+    @Test
+    public void exceptionally() throws Exception{
+        CompletableFuture<String> cfe = this.throwsException(true);
+
+        CompletableFuture cf = cfe.exceptionally(throwable -> {return "Handled: " + throwable;}); //только exception, в отличии от handle который либо exception, либо result.
+        System.out.println(cf.get());
+    }
+
+    @Test
+    public void exceptionInOneOfStages() throws Exception{
+        CompletableFuture<String> cfe = this.throwsException(false);
+        CompletableFuture<String> cfeee = cfe
+                .thenApply(r -> {throw new NoSuchElementException();}) //вернет первый Exception, потому что дальше передавать уже нечего.
+                .thenApply(r -> {throw new RuntimeException();})
+                .thenApply(r -> "text2");
+
+        CompletableFuture cf = cfeee.exceptionally(throwable -> {return "Handled: " + throwable;}); //только exception, в отличии от handle который либо exception, либо result.
+        System.out.println(cf.get());
+
+        //при anyOf - если первый(самый быстрый) выполнится удачно, не важно что будет с остальными, вернется результат первого.
+//                  - если первый(самый быстрый) выполнится НЕудачно, не важно что будет с остальными, вернется Exception
+        //при allOf - если хотя бы один бросит Exception, то и результат будет Exception
     }
 }
